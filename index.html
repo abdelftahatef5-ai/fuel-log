@@ -1305,6 +1305,14 @@
         cursor: not-allowed;
         transform: none;
       }
+      .auth-buttons {
+        display: flex;
+        gap: 8px;
+      }
+      .auth-buttons .btn {
+        flex: 1;
+        justify-content: center;
+      }
       .auth-status {
         font-family: "JetBrains Mono", monospace;
         font-size: 11px;
@@ -1922,8 +1930,8 @@
         <div class="auth-brand">FUEL<span class="dot">.</span>LOG</div>
         <div class="auth-tag">// SIGN IN TO SYNC</div>
         <p class="auth-text">
-          Enter your email and we'll send you a one-tap sign-in link. Open it on
-          any device to access your data.
+          Sign in to sync your meals across all your devices. Use the same
+          credentials everywhere.
         </p>
         <div class="auth-form">
           <input
@@ -1932,12 +1940,23 @@
             placeholder="you@example.com"
             autocomplete="email"
           />
-          <button class="btn" id="auth-send-btn">Send Magic Link</button>
+          <input
+            type="password"
+            id="auth-password"
+            placeholder="Password (min 6 characters)"
+            autocomplete="current-password"
+          />
+          <div class="auth-buttons">
+            <button class="btn secondary" id="auth-signup-btn">
+              Create Account
+            </button>
+            <button class="btn" id="auth-signin-btn">Sign In</button>
+          </div>
         </div>
         <div class="auth-status" id="auth-status"></div>
         <div class="auth-footer">
-          No password. No tracking. Your data lives in your own private Supabase
-          database.
+          First time? Tap <strong>Create Account</strong>. Coming back? Tap
+          <strong>Sign In</strong>. Same credentials across all your devices.
         </div>
       </div>
     </div>
@@ -2002,7 +2021,7 @@
       // step-by-step instructions (~10 minutes, all free).
       //
       // Leave BOTH EMPTY for local-only mode (data stays in this browser).
-      const SUPABASE_URL = "https://ettnqgtnwickveoqzbjc.supabase.co";
+      const SUPABASE_URL = "https://ettnqgtnwickveoqzbjc.supabase.co"; // e.g. 'https://abcdefghijk.supabase.co'
       const SUPABASE_ANON_KEY =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0dG5xZ3Rud2lja3Zlb3F6YmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2ODkyOTgsImV4cCI6MjA5NTI2NTI5OH0.gzDrwckLbORtTlCCGLfRPhaVw05y0gQkmOVZfS35r-I"; // your project's anon (public) key
       // ===========================================================
@@ -3760,45 +3779,96 @@
         }
       }
 
-      // Magic link sign-in handler
+      // Email + password sign-in / sign-up
       if (cloudEnabled) {
-        document
-          .getElementById("auth-send-btn")
-          .addEventListener("click", async () => {
-            const emailEl = document.getElementById("auth-email");
-            const statusEl = document.getElementById("auth-status");
-            const btn = document.getElementById("auth-send-btn");
-            const email = emailEl.value.trim();
-            if (!email || !email.includes("@")) {
-              statusEl.className = "auth-status error";
-              statusEl.textContent = "Enter a valid email address";
-              return;
-            }
-            statusEl.className = "auth-status";
-            statusEl.innerHTML = '<span class="spinner"></span>Sending…';
-            btn.disabled = true;
-            try {
-              const { error } = await sb.auth.signInWithOtp({
+        async function tryAuth(action) {
+          const emailEl = document.getElementById("auth-email");
+          const passEl = document.getElementById("auth-password");
+          const statusEl = document.getElementById("auth-status");
+          const signinBtn = document.getElementById("auth-signin-btn");
+          const signupBtn = document.getElementById("auth-signup-btn");
+          const email = emailEl.value.trim();
+          const password = passEl.value;
+
+          if (!email || !email.includes("@")) {
+            statusEl.className = "auth-status error";
+            statusEl.textContent = "Enter a valid email address";
+            return;
+          }
+          if (!password || password.length < 6) {
+            statusEl.className = "auth-status error";
+            statusEl.textContent = "Password must be at least 6 characters";
+            return;
+          }
+
+          signinBtn.disabled = true;
+          signupBtn.disabled = true;
+          statusEl.className = "auth-status";
+          statusEl.innerHTML =
+            '<span class="spinner"></span>' +
+            (action === "signup" ? "Creating account…" : "Signing in…");
+
+          try {
+            if (action === "signup") {
+              const { data, error } = await sb.auth.signUp({ email, password });
+              if (error) throw error;
+              if (data.session) {
+                statusEl.className = "auth-status success";
+                statusEl.textContent = "✓ Account created — signing you in…";
+              } else {
+                // Email confirmation is still enabled in Supabase
+                statusEl.className = "auth-status success";
+                statusEl.innerHTML =
+                  '✓ Check your email to confirm.<br/>Or disable "Confirm email" in Supabase → Authentication → Providers → Email to skip this step.';
+                signinBtn.disabled = false;
+                signupBtn.disabled = false;
+              }
+            } else {
+              const { error } = await sb.auth.signInWithPassword({
                 email,
-                options: { emailRedirectTo: window.location.href },
+                password,
               });
               if (error) throw error;
-              statusEl.className = "auth-status success";
-              statusEl.textContent =
-                "✓ Check your email — click the link to sign in";
-            } catch (err) {
-              statusEl.className = "auth-status error";
-              statusEl.textContent = "Failed: " + (err.message || "try again");
-            } finally {
-              btn.disabled = false;
             }
-          });
+          } catch (err) {
+            statusEl.className = "auth-status error";
+            let msg = err.message || "Failed";
+            if (/Invalid login/i.test(msg))
+              msg = "Wrong email or password. New here? Tap Create Account.";
+            else if (
+              /already registered/i.test(msg) ||
+              /already exists/i.test(msg)
+            )
+              msg = "Email already registered. Tap Sign In instead.";
+            statusEl.textContent = msg;
+            signinBtn.disabled = false;
+            signupBtn.disabled = false;
+          }
+        }
 
+        document
+          .getElementById("auth-signin-btn")
+          .addEventListener("click", () => tryAuth("signin"));
+        document
+          .getElementById("auth-signup-btn")
+          .addEventListener("click", () => tryAuth("signup"));
+
+        // Enter on email → focus password; Enter on password → sign in
         document
           .getElementById("auth-email")
           .addEventListener("keydown", (e) => {
-            if (e.key === "Enter")
-              document.getElementById("auth-send-btn").click();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              document.getElementById("auth-password").focus();
+            }
+          });
+        document
+          .getElementById("auth-password")
+          .addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              document.getElementById("auth-signin-btn").click();
+            }
           });
 
         document
